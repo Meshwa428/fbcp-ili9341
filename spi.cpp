@@ -13,6 +13,7 @@
 #include "dma.h"
 #include "mailbox.h"
 #include "mem_alloc.h"
+#include "touch.h"
 
 // Uncomment this to print out all bytes sent to the SPI bus
 // #define DEBUG_SPI_BUS_WRITES
@@ -469,9 +470,35 @@ void *spi_thread(void *unused)
 #endif
   while(programRunning)
   {
+#ifdef ENABLE_TOUCH_READER
+    // Track mode transitions and switch SPI bus clock globally
+    static bool wasInTouchMode = false;
+    if (isTouchModeActive && !wasInTouchMode)
+    {
+      wasInTouchMode = true;
+      printf("Touch mode ON: display framerate lowered\n");
+    }
+    else if (!isTouchModeActive && wasInTouchMode)
+    {
+      wasInTouchMode = false;
+      printf("Game mode ON: display framerate restored\n");
+    }
+#endif
+
     if (spiTaskMemory->queueTail != spiTaskMemory->queueHead)
     {
       ExecuteSPITasks();
+#ifdef ENABLE_TOUCH_READER
+      // After draining all display SPI tasks for this frame, immediately poll touch
+      if (isTouchModeActive)
+      {
+#ifdef USE_DMA_TRANSFERS
+        WaitForDMAFinished();
+#endif
+        WaitForPolledSPITransferToFinish();
+        ReadTouch();
+      }
+#endif
     }
     else
     {
@@ -480,7 +507,24 @@ void *spi_thread(void *unused)
       spiThreadSleepStartTime = t0;
       __atomic_store_n(&spiThreadSleeping, 1, __ATOMIC_RELAXED);
 #endif
-      if (programRunning) syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAIT, spiTaskMemory->queueHead, 0, 0, 0); // Start sleeping until we get new tasks
+      if (programRunning) 
+      {
+#ifdef ENABLE_TOUCH_READER
+        timespec touch_timeout = {};
+        touch_timeout.tv_nsec = 10000000; // 10ms
+        int ret = syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAIT, spiTaskMemory->queueHead, isTouchModeActive ? &touch_timeout : 0, 0, 0);
+        if (isTouchModeActive && ret == -1)
+        {
+#ifdef USE_DMA_TRANSFERS
+          WaitForDMAFinished();
+#endif
+          WaitForPolledSPITransferToFinish();
+          ReadTouch();
+        }
+#else
+        syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAIT, spiTaskMemory->queueHead, 0, 0, 0); // Start sleeping until we get new tasks
+#endif
+      }
 #ifdef STATISTICS
       __atomic_store_n(&spiThreadSleeping, 0, __ATOMIC_RELAXED);
       uint64_t t1 = tick();

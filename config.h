@@ -215,6 +215,18 @@
 // If defined, enable a low battery icon triggered by a GPIO pin whose BCM number is given.
 // #define LOW_BATTERY_PIN 19
 
+#ifndef TOUCH_CS_PIN
+#define TOUCH_CS_PIN 7
+#endif
+
+#ifndef TOUCH_IRQ_PIN
+#define TOUCH_IRQ_PIN 25
+#endif
+
+#ifndef TOUCH_TARGET_FRAME_RATE
+#define TOUCH_TARGET_FRAME_RATE 15
+#endif
+
 // Which state of the LOW_BATTERY_PIN is considered to be low battery. Note that the GPIO pin must be
 // in the correct state (input with pull-up/pull-down resistor) before the program is started.
 #define LOW_BATTERY_IS_ACTIVE_HIGH 0

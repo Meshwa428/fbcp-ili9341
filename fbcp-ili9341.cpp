@@ -29,6 +29,7 @@
 #include "mem_alloc.h"
 #include "keyboard.h"
 #include "low_battery.h"
+#include "touch.h"
 
 int CountNumChangedPixels(uint16_t *framebuffer, uint16_t *prevFramebuffer)
 {
@@ -67,6 +68,30 @@ void MarkProgramQuitting()
 
 void ProgramInterruptHandler(int signal)
 {
+  if (signal == SIGUSR1)
+  {
+    isTouchModeActive = !isTouchModeActive;
+    printf("Toggled touch mode: %s\n", isTouchModeActive ? "ON" : "OFF");
+    if (isTouchModeActive) LoadCalibration();
+    if (spiTaskMemory)
+    {
+      syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAKE, 1, 0, 0, 0); // Wake the SPI thread to pick up the new isTouchModeActive state and start polling touch
+    }
+    return;
+  }
+
+  if (signal == SIGUSR2)
+  {
+    isTouchpadMode = !isTouchpadMode;
+    printf("[Touch] Switching to %s mode...\n", isTouchpadMode ? "Touchpad (Gestures)" : "Touchscreen (Direct)");
+    RecreateUinputDevice();
+    if (spiTaskMemory)
+    {
+      syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAKE, 1, 0, 0, 0);
+    }
+    return;
+  }
+
   printf("Signal %s(%d) received, quitting\n", SignalToString(signal), signal);
   static int quitHandlerCalled = 0;
   if (++quitHandlerCalled >= 5)
@@ -111,6 +136,7 @@ int main()
   int spiEndX = DISPLAY_WIDTH;
 
   InitGPU();
+  InitTouch();
 
   spans = (Span*)Malloc((gpuFrameWidth * gpuFrameHeight / 2) * sizeof(Span), "main() task spans");
   int size = gpuFramebufferSizeBytes;
@@ -540,9 +566,10 @@ int main()
     bool displayIsActive = percentageOfScreenChanged > DISPLAY_CONSIDERED_INACTIVE_PERCENTAGE;
     if (displayIsActive)
       displayContentsLastChanged = tick();
-
+ 
     bool keyboardIsActive = TimeSinceLastKeyboardPress() < TURN_DISPLAY_OFF_AFTER_USECS_OF_INACTIVITY;
-    if (displayIsActive || keyboardIsActive)
+    bool touchIsActive = (tick() - lastTouchTime) < TURN_DISPLAY_OFF_AFTER_USECS_OF_INACTIVITY;
+    if (displayIsActive || keyboardIsActive || touchIsActive)
     {
       if (displayOff)
       {
