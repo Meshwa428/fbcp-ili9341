@@ -42,8 +42,21 @@ int TOUCH_Y_MAX = 3599;
 #endif
 
 volatile bool isTouchModeActive = false;
-volatile bool isTouchpadMode = true;
+volatile bool isTouchpadMode = false;
 volatile uint64_t lastTouchTime = 0;
+
+#define STATE_FILE_PATH "/tmp/fbcp-touch-state"
+
+void WriteStateFile()
+{
+    FILE *f = fopen(STATE_FILE_PATH, "w");
+    if (f) {
+        fprintf(f, "touch=%s\nmode=%s\n",
+            isTouchModeActive ? "on" : "off",
+            isTouchpadMode ? "touchpad" : "touchscreen");
+        fclose(f);
+    }
+}
 static uint64_t lastTapTime = 0;
 static int tapCount = 0;
 
@@ -163,6 +176,7 @@ void InitTouch()
     SET_GPIO_MODE(TOUCH_IRQ_PIN, 0x00); // input
     
     printf("Touch controller initialized\n");
+    WriteStateFile();
 }
 
 // Send a momentary button click (press + release)
@@ -304,17 +318,42 @@ void ReadTouch()
 
     uint32_t avgX = 0, avgY = 0;
     const int NUM_SAMPLES = 4;
+    bool validRead = true;
 
     for (int i = 0; i < NUM_SAMPLES; ++i) {
         CLEAR_GPIO(TOUCH_CS_PIN);
-        avgY += SPIXfer16(0x90);
+        uint16_t ty = SPIXfer16(0x90);
         SET_GPIO(TOUCH_CS_PIN);
 
         CLEAR_GPIO(TOUCH_CS_PIN);
-        avgX += SPIXfer16(0xD0);
+        uint16_t tx = SPIXfer16(0xD0);
         SET_GPIO(TOUCH_CS_PIN);
+
+        // Resistive touch jitter/garbage: if we get 0 or 4095, it's usually a floating/invalid read
+        if (tx == 0 || tx >= 4095 || ty == 0 || ty >= 4095) {
+            validRead = false;
+            break;
+        }
+        avgX += tx;
+        avgY += ty;
     }
+
+    // Re-check IRQ pin after SPI transfers. If it's high now, the user likely lifted 
+    // the stylus DURING the read, so the data is garbage.
+    if (GET_GPIO(TOUCH_IRQ_PIN) != 0) validRead = false;
     
+    if (!validRead) {
+        // Discard junk results
+        spi->cs = BCM2835_SPI0_CS_CLEAR | TOUCH_SPI_SETTINGS;
+        __sync_synchronize();
+        spi->clk = SPI_BUS_CLOCK_DIVISOR;
+        __sync_synchronize();
+        spi->cs = BCM2835_SPI0_CS_TA | DISPLAY_SPI_DRIVE_SETTINGS;
+        spi->dlen = 2;
+        __sync_synchronize();
+        return;
+    }
+
     uint16_t x = avgX / NUM_SAMPLES;
     uint16_t y = avgY / NUM_SAMPLES;
 
@@ -387,10 +426,12 @@ void ReadTouch()
     static int lastEmittedX = -1, lastEmittedY = -1;
     const int DEADZONE = 16;
     if (abs(filteredX - lastEmittedX) > DEADZONE || abs(filteredY - lastEmittedY) > DEADZONE || !wasTouching) {
-        // Both modes use absolute coordinates
-        // In touchpad mode, libinput converts ABS to relative internally
-        // In touchscreen mode, ABS maps directly to screen position
-        EmitAbsMove(filteredX, filteredY);
+        // In touchpad mode, skip the FIRST emit on initial contact —
+        // just record the starting position. Emitting ABS on first touch 
+        // causes the cursor to jump to that position.
+        if (!isTouchpadMode || wasTouching) {
+            EmitAbsMove(filteredX, filteredY);
+        }
         lastEmittedX = filteredX;
         lastEmittedY = filteredY;
     }

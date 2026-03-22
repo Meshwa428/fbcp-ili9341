@@ -73,6 +73,7 @@ void ProgramInterruptHandler(int signal)
     isTouchModeActive = !isTouchModeActive;
     printf("Toggled touch mode: %s\n", isTouchModeActive ? "ON" : "OFF");
     if (isTouchModeActive) LoadCalibration();
+    WriteStateFile();
     if (spiTaskMemory)
     {
       syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAKE, 1, 0, 0, 0); // Wake the SPI thread to pick up the new isTouchModeActive state and start polling touch
@@ -85,6 +86,7 @@ void ProgramInterruptHandler(int signal)
     isTouchpadMode = !isTouchpadMode;
     printf("[Touch] Switching to %s mode...\n", isTouchpadMode ? "Touchpad (Gestures)" : "Touchscreen (Direct)");
     RecreateUinputDevice();
+    WriteStateFile();
     if (spiTaskMemory)
     {
       syscall(SYS_futex, &spiTaskMemory->queueTail, FUTEX_WAKE, 1, 0, 0, 0);

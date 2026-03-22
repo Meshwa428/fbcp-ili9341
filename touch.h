@@ -13,6 +13,7 @@ void InitTouch(void);
 void ReadTouch(void);
 void LoadCalibration(void);
 void RecreateUinputDevice(void);
+void WriteStateFile(void);
 
 #else
 
@@ -23,5 +24,6 @@ inline void InitTouch(void) {}
 inline void ReadTouch(void) {}
 inline void LoadCalibration(void) {}
 inline void RecreateUinputDevice(void) {}
+inline void WriteStateFile(void) {}
 
 #endif

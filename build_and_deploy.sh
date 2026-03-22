@@ -21,6 +21,7 @@ fi
 cd "$BUILD_DIR"
 
 # Run cmake if no Makefile exists yet
+make clean
 if [ ! -f "Makefile" ]; then
     echo "  Running cmake..."
     cmake \
