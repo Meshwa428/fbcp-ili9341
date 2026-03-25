@@ -35,7 +35,7 @@ if [ ! -f "Makefile" ]; then
         -DENABLE_TOUCH_READER=ON \
         -DTOUCH_CS_PIN=7 \
         -DTOUCH_IRQ_PIN=21 \
-        -DTOUCH_TARGET_FRAME_RATE=30 \
+        -DTOUCH_TARGET_FRAME_RATE=15 \
         -DDISPLAY_SWAP_BGR=ON \
         -DDISPLAY_ROTATE_180_DEGREES=ON \
         ..
@@ -53,12 +53,14 @@ Description=Framebuffer Copy to SPI
 DefaultDependencies=no
 After=systemd-modules-load.service
 Before=basic.target
+StartLimitIntervalSec=10
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/fbcp-ili9341
 Restart=always
-RestartSec=0
+RestartSec=1
 
 [Install]
 WantedBy=sysinit.target

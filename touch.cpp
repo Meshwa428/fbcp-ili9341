@@ -291,7 +291,14 @@ void ReadTouch()
     // Full SPI touch tracking only if mode is ACTIVE
     if (!isTouchModeActive) return;
 
-    printf("[Touch] IRQ asserted, starting touch read\n");
+    // IRQ flood protection: If IRQ is stuck low but we get 10 invalid reads in a row, back off.
+    static int consecutiveInvalidReads = 0;
+    if (consecutiveInvalidReads > 10)
+    {
+        consecutiveInvalidReads = 0;
+        usleep(50000); // 50ms break to let display thread breathe
+        return;
+    }
 
     // Deselect the display explicitly so it doesn't eavesdrop the Touch SPI data
 #if !defined(DISPLAY_NEEDS_CHIP_SELECT_SIGNAL)
@@ -305,15 +312,12 @@ void ReadTouch()
     // Prepare a SPI setting that uses a dummy hardware CS (2) to prevent the hardware from asserting CE0/CE1.
     uint32_t TOUCH_SPI_SETTINGS = (DISPLAY_SPI_DRIVE_SETTINGS & ~3) | 2;
 
-    printf("[Touch] Clearing SPI state...\n");
     spi->cs = BCM2835_SPI0_CS_CLEAR | TOUCH_SPI_SETTINGS;
     __sync_synchronize();
 
-    printf("[Touch] Halving SPI speed locally to ~2MHz...\n");
-    spi->clk = 200;
+    spi->clk = 200; // ~2MHz SPI for touch
     __sync_synchronize();
 
-    printf("[Touch] Setting TA...\n");
     spi->cs = BCM2835_SPI0_CS_TA | TOUCH_SPI_SETTINGS;
 
     uint32_t avgX = 0, avgY = 0;
@@ -343,6 +347,7 @@ void ReadTouch()
     if (GET_GPIO(TOUCH_IRQ_PIN) != 0) validRead = false;
     
     if (!validRead) {
+        consecutiveInvalidReads++;
         // Discard junk results
         spi->cs = BCM2835_SPI0_CS_CLEAR | TOUCH_SPI_SETTINGS;
         __sync_synchronize();
@@ -353,6 +358,8 @@ void ReadTouch()
         __sync_synchronize();
         return;
     }
+
+    consecutiveInvalidReads = 0; // Got a real touch, reset counter
 
     uint16_t x = avgX / NUM_SAMPLES;
     uint16_t y = avgY / NUM_SAMPLES;
